@@ -12,7 +12,7 @@ module System.Serf (
   SerfM,
   Serf(..),
   MonadSerf(..),
-  StartAgentOptions(..),
+  -- StartAgentOptions(..),
   serf,
   serfAt,
   serfWithOpts,
@@ -47,29 +47,46 @@ import System.Exit
 import System.IO (Handle, hClose)
 import System.Process
 
-{-
-data Configuration = Configuration
-  { _confNodeName
-  , _confRole
-  , _confBindAddr
-  , _confEncryptKey
-  , _confLogLevel
-  , _confProtocol
-  , _confRpcAddr
-  , _confEventHandlers :: [EventHandler]
-  , _confStartJoin :: [String]
-  }
-
--}
-
 -- | Initialization options for starting the serf agent.
 data StartAgentOptions = StartAgentOptions
+  { agentNodeName :: Maybe String
+  -- ^ An optional node name for the agent.
+  --
+  -- Defaults to the hostname of the machine.
+  , agentRole :: Maybe String
+  -- ^ An optional role for the node. This can be used to differenatiate nodes in the cluster that have different roles.
+  --
+  -- Empty by default.
+  , agentBindAddr :: Maybe String
+  -- ^ The address that the agent will bind to for communication with other Serf nodes.
+  --
+  -- Defaults to 0.0.0.0:7946
+  , agentEncryptKey :: Maybe String
+  -- ^ An optional encryption key created by running the serf keygen command. All nodes in the cluster must use the same
+  -- encryption key in order to communicate.
+  , agentLogLevel :: Maybe LogLevel
+  -- ^ The level of logging to show after the agent has started.
+  , agentProtocol :: Maybe Int
+  -- ^ The serf protocol version to use.
+  , agentRpcAddr :: Maybe String
+  -- ^ The address that serf will bind to for the agent's internal RPC server.
+  --
+  -- Defaults to 127.0.0.1:7373.
+  , agentEventHandlers :: [String]
+  -- ^ A list of event handlers following the syntax specified at <http://www.serfdom.io/docs/agent/event-handlers.html>.
+  --
+  -- Handlers will be separated by commas automatically.
+  , agentStartJoin :: [String]
+  -- ^ A list of nodes to join immediately upon startup.
+  --
+  -- If joining any of the specified nodes fails, the agent will fail to start
+  }
 
 -- | Options for monitoring serf agent events. It is recommended that the log level is cranked up
 -- to either "Warn" or "Error", as the default currently seems to be "Debug", and is not generally
 -- useful in production environments.
 data MonitorOptions = MonitorOptions
-  { _moLogLevel :: Maybe LogLevel
+  { monitorLogLevel :: Maybe LogLevel
   }
 
 -- | The minimum log level to log with the "monitor" command.
@@ -95,7 +112,9 @@ logStr l = case l of
 -- | Dispatch a custom user event into a Serf cluster.
 --
 -- Nodes in the cluster listen for these custom events and react to them.
-sendEvent :: String -> Maybe String -> SerfM Bool
+sendEvent :: String -- ^ The name of the custom event.
+  -> Maybe String -- ^ An optional payload to be sent with the event.
+  -> SerfM Bool -- ^ Whether the event was successfully sent.
 sendEvent n p = sendEvent' (SendOptions Nothing) n p
 
 -- | Dispatch a custom user event into a Serf cluster with additional flags set.
@@ -125,13 +144,13 @@ members = singleton Members
 
 -- | Commands supported by the serf executable (serf protocol v1).
 data Serf a where
-  StartAgent :: StartAgentOptions -> Serf Bool
+  -- StartAgent :: StartAgentOptions -> Serf Bool
   SendEvent :: SendOptions -> String -> Maybe String -> Serf Bool
   ForceLeave :: String -> Serf Bool
   JoinNodes :: JoinOptions -> String -> [String] -> Serf Bool
   Members :: Serf [MemberStatus]
   -- DetailedMembers :: Serf [DetailedMemberStatus]
-  Monitor :: MonitorOptions -> Serf (Maybe (Source (ResourceT IO) Text))
+  -- Monitor :: MonitorOptions -> Serf (Maybe (Source (ResourceT IO) Text))
 
 -- | An alias for the operational monad created with the "Serf" data type.
 type SerfM = Program Serf
@@ -176,9 +195,9 @@ serfWithOpts globals m = case view m of
     --serf $ k b
 
 data MemberInfo = MemberInfo
-  { _miName :: String
-  , _miAddress :: String
-  , _miRole :: String
+  { memberName :: String
+  , memberAddress :: String
+  , memberRole :: String
   }
 
 -- | The last known status of listed nodes.
@@ -186,9 +205,9 @@ data LastKnownStatus = Alive | Failed
   deriving (Read, Show)
 
 data MemberStatus = MemberStatus
-  { _msName :: Text
-  , _msAddress :: Text
-  , _msStatus :: LastKnownStatus
+  { memberStatusName :: Text
+  , memberStatusAddress :: Text
+  , memberStatus :: LastKnownStatus
   } deriving (Read, Show)
 
 {-
@@ -207,7 +226,7 @@ stopAgent
 -}
 
 data SendOptions = SendOptions
-  { _sendCoalesce :: Maybe Bool
+  { coalesceEvents :: Maybe Bool
   }
 
 bool :: Bool -> String
@@ -236,7 +255,7 @@ sendEventCore globalOpts options name mPayload = do
     payload = toList mPayload
     processSettings = serfCmd "event" (optionArgs ++ [name] ++ payload) globalOpts
     optionArgs = toList sendCoalesce
-    sendCoalesce = fmap (\o -> "-coalesce=" ++ bool o) $ _sendCoalesce options
+    sendCoalesce = fmap (\o -> "-coalesce=" ++ bool o) $ coalesceEvents options
 
 forceLeaveCore :: [String] -> String -> IO Bool
 forceLeaveCore globalOpts node = do
@@ -305,7 +324,7 @@ monitorCore globalOpts opts = do
     then return $ Just undefined
     else return Nothing
   where
-    processSettings = serfCmd "monitor" (toList $ fmap logStr $ _moLogLevel opts) globalOpts
+    processSettings = serfCmd "monitor" (toList $ fmap logStr $ monitorLogLevel opts) globalOpts
     src = do
       (_, (Just h), _, process) <- createProcess $ processSettings { std_out = CreatePipe }
       mExit <- getProcessExitCode process
