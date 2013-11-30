@@ -2,7 +2,33 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
-module System.Serf where
+-- | \"Serf is a service discovery and orchestration tool that is decentralized, highly available, and fault tolerant. Serf runs on every major platform: Linux, Mac OS X, and Windows. It is extremely lightweight: it uses 5 to 10 MB of resident memory and primarily communicates using infrequent UDP messages.\"
+--
+-- <www.serfdom.io/intro> 
+--
+-- This module provides facilities for interacting with a serf agent running on a machine. This module aims to expose all functionality
+-- provided by the serf command-line tool in a programmatic way.
+module System.Serf (
+  SerfM,
+  Serf(..),
+  MonadSerf(..),
+  StartAgentOptions(..),
+  serf,
+  serfAt,
+  serfWithOpts,
+  sendEvent,
+  sendEvent',
+  SendOptions(..),
+  forceLeave,
+  joinNodes,
+  joinNodes',
+  JoinOptions(..),
+  members,
+  MemberStatus(..),
+  LastKnownStatus(..),
+  LogLevel(..),
+  MonitorOptions(..)
+) where
 import Control.Applicative
 import Control.Monad.Operational
 import Control.Monad.Reader
@@ -36,14 +62,23 @@ data Configuration = Configuration
 
 -}
 
+-- | Initialization options for starting the serf agent.
 data StartAgentOptions = StartAgentOptions
+
+-- | Options for monitoring serf agent events. It is recommended that the log level is cranked up
+-- to either "Warn" or "Error", as the default currently seems to be "Debug", and is not generally
+-- useful in production environments.
 data MonitorOptions = MonitorOptions
   { _moLogLevel :: Maybe LogLevel
   }
 
-data LogLevel = Trace | Debug | Info | Warn | Error
-
-type ResIO = ResourceT IO
+-- | The minimum log level to log with the "monitor" command.
+data LogLevel
+  = Trace
+  | Debug
+  | Info
+  | Warn
+  | Error
 
 logStr :: LogLevel -> String
 logStr l = case l of
@@ -57,51 +92,64 @@ logStr l = case l of
   --WriteAgentConfig :: FilePath -> AgentConfig -> Serf ()
   --GetEnv :: Serf SerfEnv
 
-sendEvent :: String -> Maybe String -> SerfM Bool
-sendEvent n p = sendEvent' (SendOptions Nothing) n p
-
 -- | Dispatch a custom user event into a Serf cluster.
 --
 -- Nodes in the cluster listen for these custom events and react to them.
---class SendEvent a where
---  sendEvent :: String -> Maybe String -> a
+sendEvent :: String -> Maybe String -> SerfM Bool
+sendEvent n p = sendEvent' (SendOptions Nothing) n p
+
+-- | Dispatch a custom user event into a Serf cluster with additional flags set.
 sendEvent' :: SendOptions -> String -> Maybe String -> SerfM Bool
 sendEvent' o n p = singleton $ SendEvent o n p
 
+-- | Force a specific node to leave a cluster. Note that the node will
+-- rejoin unless the serf agent for that node has exited.
 forceLeave :: String -> SerfM Bool
 forceLeave = singleton . ForceLeave
 
-joinNodes :: String -> [String] -> SerfM Bool
+-- | Join the node to a cluster using the specified address(es).
+--
+-- At least one node address must be specified.
+joinNodes :: String -- ^ The first node to join.
+  -> [String] -- ^ Additional nodes to join.
+  -> SerfM Bool -- ^ Whether joining all nodes was successful.
 joinNodes n ns = joinNodes' (JoinOptions Nothing) n ns
 
+-- | Join the node to a cluster with non-standard options.
 joinNodes' :: JoinOptions -> String -> [String] -> SerfM Bool
 joinNodes' o n ns = singleton $ JoinNodes o n ns
 
-members :: SerfM (Maybe [MemberStatus])
+-- | List known members in the cluster
+members :: SerfM [MemberStatus]
 members = singleton Members
 
+-- | Commands supported by the serf executable (serf protocol v1).
 data Serf a where
   StartAgent :: StartAgentOptions -> Serf Bool
   SendEvent :: SendOptions -> String -> Maybe String -> Serf Bool
   ForceLeave :: String -> Serf Bool
   JoinNodes :: JoinOptions -> String -> [String] -> Serf Bool
-  Members :: Serf (Maybe [MemberStatus])
-  --DetailedMembers :: Serf [DetailedMemberStatus]
-  Monitor :: MonitorOptions -> Serf (Maybe (Source ResIO Text))
+  Members :: Serf [MemberStatus]
+  -- DetailedMembers :: Serf [DetailedMemberStatus]
+  Monitor :: MonitorOptions -> Serf (Maybe (Source (ResourceT IO) Text))
 
+-- | An alias for the operational monad created with the "Serf" data type.
 type SerfM = Program Serf
 
-class MonadSerf m where
-  evalSerf :: Serf a -> m a
+-- | A convenience class for lifting serf action evaluation into monad transformer stacks.
+class (Monad m) => MonadSerf m where
+  -- | Evaluate the specified serf actions in given context
+  evalSerf :: SerfM a -> m a
 
---instance MonadSerf
-
+-- | Run serf actions locally on the default port.
 serf :: SerfM a -> IO a
 serf m = serfWithOpts [] m
 
+-- | Run serf actions at a specified RPC address.
 serfAt :: String -> SerfM a -> IO a
 serfAt str = serfWithOpts ["-rpc-addr=" ++ str]
 
+-- | Run serf actions with a list of arbitrary command line arguments.
 serfWithOpts :: [String] -> SerfM a -> IO a
 serfWithOpts globals m = case view m of
   Return a -> return a
@@ -133,6 +181,7 @@ data MemberInfo = MemberInfo
   , _miRole :: String
   }
 
+-- | The last known status of listed nodes.
 data LastKnownStatus = Alive | Failed
   deriving (Read, Show)
 
@@ -170,8 +219,6 @@ serfCmd cmd rest opts = proc "serf" (cmd : (opts ++ rest))
 
 toList = maybe [] (:[])
 
-
-
 -- | Allows specifiying a custom set of send options when sending an event.
 type WithSendOptions = SendOptions -> IO Bool
 
@@ -191,10 +238,6 @@ sendEventCore globalOpts options name mPayload = do
     optionArgs = toList sendCoalesce
     sendCoalesce = fmap (\o -> "-coalesce=" ++ bool o) $ _sendCoalesce options
 
-data ForceLeaveOptions = ForceLeaveOptions
-  { _flRpcAddr :: Maybe String
-  } deriving (Read, Show)
-
 forceLeaveCore :: [String] -> String -> IO Bool
 forceLeaveCore globalOpts node = do
   (_, _, _, process) <- createProcess $ processSettings
@@ -203,8 +246,9 @@ forceLeaveCore globalOpts node = do
   where
       processSettings = serfCmd "force-leave" [node] globalOpts
 
+-- | Options specific to joining a cluster
 data JoinOptions = JoinOptions
-  { _jsReplay :: Maybe Bool
+  { _jsReplay :: Maybe Bool -- ^ Whether to replay all events that have occurred in the cluster.
   }
 
 joinNodesCore :: [String] -> JoinOptions -> String -> [String] -> IO Bool
@@ -234,14 +278,14 @@ readMemberList h = runResourceT (bracketP (return h) hClose source $$ L.consume)
   where
     source h = mapOutput snd (sourceHandle h $= T.decode T.utf8 $= conduitParser memberParser)
 
-membersCore :: [String] -> IO (Maybe [MemberStatus])
+membersCore :: [String] -> IO [MemberStatus]
 membersCore globalOpts = do
   mh <- membersOutput globalOpts
   case mh of
-    Nothing -> return Nothing
+    Nothing -> return []
     Just h -> do
       l <- readMemberList h
-      return $! Just l
+      return l
 
 membersOutput :: [String] -> IO (Maybe Handle)
 membersOutput globalOpts = do
@@ -253,7 +297,7 @@ membersOutput globalOpts = do
   where
     processSettings = serfCmd "members" [] globalOpts
 
-monitorCore :: [String] -> MonitorOptions -> IO (Maybe (Source ResIO Text))
+monitorCore :: [String] -> MonitorOptions -> IO (Maybe (Source (ResourceT IO) Text))
 monitorCore globalOpts opts = do
   (_, (Just h), _, process) <- createProcess $ processSettings { std_out = CreatePipe }
   exitCode <- waitForProcess process
@@ -269,7 +313,7 @@ monitorCore globalOpts opts = do
         then undefined
         else undefined
 
-linesUntilNewline :: Conduit Text ResIO Text
+linesUntilNewline :: Conduit Text (ResourceT IO) Text
 linesUntilNewline = do
   mLine <- await
   liftIO $ print mLine

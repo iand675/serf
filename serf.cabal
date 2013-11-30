@@ -21,7 +21,8 @@ source-repository    head
 
 
 library
-  exposed-modules:     System.Serf
+  exposed-modules:     System.Serf,
+                       System.Serf.Handler
   -- other-modules:       
   -- other-extensions:    
   build-depends:       base >=4.6 && <4.7,
