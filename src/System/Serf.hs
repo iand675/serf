@@ -32,6 +32,7 @@ module System.Serf (
 import Control.Applicative
 import Control.Monad.Operational
 import Control.Monad.Reader
+import Control.Monad.Trans.Resource
 import Data.Attoparsec.Text hiding (Done)
 import Data.Char
 import Data.Conduit.Attoparsec
