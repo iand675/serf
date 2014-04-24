@@ -30,6 +30,7 @@ library
                        operational,
                        mtl,
                        conduit,
+		       conduit-extra,
                        attoparsec-conduit,
                        attoparsec,
                        text,
