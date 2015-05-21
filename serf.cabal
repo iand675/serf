@@ -2,7 +2,7 @@
 -- see http://haskell.org/cabal/users-guide/
 
 name:                serf
-version:             0.1.0.0
+version:             0.1.1.0
 synopsis:            Interact with Serf via Haskell.
 description:         Bindings to most of the commands provided by serf.
 homepage:            http://github.com/sanetracker/serf
@@ -10,7 +10,7 @@ license:             MIT
 license-file:        LICENSE
 author:              Ian Duncan
 maintainer:          ian@iankduncan.com
-copyright:           SaneTracker
+copyright:           Ian Duncan
 category:            System
 build-type:          Simple
 -- extra-source-files:  
