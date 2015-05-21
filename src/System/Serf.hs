@@ -338,7 +338,7 @@ linesUntilNewline = do
   mLine <- await
   liftIO $ print mLine
   case mLine of
-    Nothing -> ConduitM $ Done ()
+    Nothing -> return ()
     Just l -> if l == ""
-      then ConduitM $ Done ()
+      then return ()
       else yield l >> linesUntilNewline
